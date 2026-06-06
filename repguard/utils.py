@@ -66,9 +66,10 @@ console = Console(theme=custom_theme)
 def print_banner() -> None:
     """Print the RepGuard startup banner."""
     console.print()
-    console.print("┌─────────────────────────────────────────────────┐", style="info")
-    console.print("│         🛡️  [bold cyan]RepGuard[/bold cyan] — Reputation Defense Engine      │", style="info")
-    console.print("│         AI-Powered Fake Review Detection        │", style="info")
-    console.print("│         v0.1.0                                  │", style="info")
-    console.print("└─────────────────────────────────────────────────┘", style="info")
+    console.print("  ┌───────────────────────────────────────────────┐", style="info")
+    console.print("  │  🛡️  [bold cyan]RepGuard[/bold cyan] — Reputation Defense Engine  │", style="info")
+    console.print("  │     AI-Powered Fake Review Detection        │", style="info")
+    console.print("  │     v0.1.0                                  │", style="info")
+    console.print("  └───────────────────────────────────────────────┘", style="info")
     console.print()
+

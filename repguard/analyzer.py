@@ -10,6 +10,8 @@ import asyncio
 import time
 from typing import Optional
 
+from google.genai import errors as genai_errors
+
 from google import genai
 from google.genai import types
 
@@ -91,6 +93,14 @@ Be precise in your reasoning and cite specific textual evidence from the review.
 """
 
 
+# Models to try in order (primary → fallback)
+MODEL_CHAIN = [GEMINI_MODEL, "gemini-2.0-flash"]
+
+# Retry settings
+MAX_RETRIES = 3
+RETRY_BASE_DELAY = 2  # seconds
+
+
 def _build_client() -> genai.Client:
     """Build and return a configured Gemini client."""
     api_key = get_api_key()
@@ -127,20 +137,42 @@ async def analyze_review(
         owner_response=review.response or "None",
     )
 
-    response = client.models.generate_content(
-        model=GEMINI_MODEL,
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            system_instruction=SYSTEM_PROMPT,
-            response_mime_type="application/json",
-            response_schema=FraudAnalysis,
-            temperature=0.2,  # Low temperature for consistent analytical output
-        ),
-    )
+    # Try each model in the chain with retries
+    last_error = None
+    for model_name in MODEL_CHAIN:
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=SYSTEM_PROMPT,
+                        response_mime_type="application/json",
+                        response_schema=FraudAnalysis,
+                        temperature=0.2,
+                    ),
+                )
+                analysis = FraudAnalysis.model_validate_json(response.text)
+                return analysis
 
-    # Parse the structured JSON response into our Pydantic model
-    analysis = FraudAnalysis.model_validate_json(response.text)
-    return analysis
+            except genai_errors.ServerError as e:
+                last_error = e
+                delay = RETRY_BASE_DELAY * (2 ** (attempt - 1))
+                console.print(
+                    f"    [warning]⚠ {model_name} unavailable "
+                    f"(attempt {attempt}/{MAX_RETRIES}), "
+                    f"retrying in {delay}s...[/warning]"
+                )
+                await asyncio.sleep(delay)
+
+        console.print(
+            f"    [warning]⚠ {model_name} failed after {MAX_RETRIES} attempts, "
+            f"trying fallback...[/warning]"
+        )
+
+    raise RuntimeError(
+        f"All models failed after retries. Last error: {last_error}"
+    )
 
 
 async def analyze_reviews_batch(

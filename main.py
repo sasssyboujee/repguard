@@ -118,6 +118,10 @@ def cmd_analyze(args: argparse.Namespace) -> None:
     except EnvironmentError as e:
         console.print(f"\n[danger]✗ {e}[/danger]")
         return
+    except RuntimeError as e:
+        console.print(f"\n[danger]✗ {e}[/danger]")
+        console.print("[warning]Tip: Gemini may be overloaded. Wait a minute and try again.[/warning]")
+        return
 
     # Display results
     console.print()
