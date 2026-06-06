@@ -1,0 +1,73 @@
+Subject: Request for Removal of Fraudulent/Policy-Violating Review
+
+Dear Google Maps Support Team,
+
+I am the owner of [BUSINESS_NAME] and I am writing to formally request the removal of a review that we believe violates Google's User Contributed Content Policy.
+
+═══════════════════════════════════════════════════════════════
+REVIEW DETAILS
+═══════════════════════════════════════════════════════════════
+
+Business Name: [BUSINESS_NAME]
+Reviewer Name: [REVIEWER_NAME]
+Date of Review: [REVIEW_DATE]
+Star Rating: [STAR_RATING]
+
+Review Text:
+"[REVIEW_TEXT]"
+
+═══════════════════════════════════════════════════════════════
+BASIS FOR DISPUTE
+═══════════════════════════════════════════════════════════════
+
+We believe this review violates Google's policies for the following reasons:
+
+1. FAKE ENGAGEMENT / SPAM (Google Maps Policy Section 3.4)
+   - The review contains no specific details about any interaction with
+     our business, products, or services
+   - The language used is generic and could apply to any business
+   - [ADD ADDITIONAL SPECIFIC EVIDENCE HERE]
+
+2. CONFLICT OF INTEREST
+   - [IF APPLICABLE: Evidence suggesting this reviewer is affiliated with
+     a competing business or has a personal conflict]
+
+3. OFF-TOPIC / NOT BASED ON A REAL EXPERIENCE
+   - The reviewer does not appear to have been a genuine customer
+   - No records of this individual in our customer database match
+     the review date or described experience
+
+═══════════════════════════════════════════════════════════════
+SUPPORTING EVIDENCE
+═══════════════════════════════════════════════════════════════
+
+Our professional reputation monitoring system (RepGuard) has analyzed
+this review using advanced AI-based fraud detection and has flagged the
+following indicators of inauthenticity:
+
+- Fraud Confidence Score: [CONFIDENCE_SCORE]%
+- Key Indicators:
+  • [INDICATOR_1]
+  • [INDICATOR_2]
+  • [INDICATOR_3]
+
+═══════════════════════════════════════════════════════════════
+REQUEST
+═══════════════════════════════════════════════════════════════
+
+Based on the evidence presented above, we respectfully request that
+Google review this submission and remove it from our business profile
+in accordance with your content policies.
+
+We understand that Google takes the integrity of its review platform
+seriously, and we appreciate your prompt attention to this matter.
+
+Thank you for your time and consideration.
+
+Sincerely,
+
+[YOUR_NAME]
+[YOUR_TITLE]
+[BUSINESS_NAME]
+[BUSINESS_PHONE]
+[BUSINESS_EMAIL]
