@@ -49,6 +49,9 @@ DEFAULT_MAX_REVIEWS = 50
 # Confidence threshold for flagging a review as suspicious
 SUSPICION_THRESHOLD = 0.6
 
+# Suspicion threshold for the local ML pre-filter (below this, reviews bypass Gemini)
+PREFILTER_THRESHOLD = 0.25
+
 # ── Rich Console ───────────────────────────────────────────────────────────────
 
 custom_theme = Theme({
@@ -67,9 +70,9 @@ def print_banner() -> None:
     """Print the RepGuard startup banner."""
     console.print()
     console.print("  ┌───────────────────────────────────────────────┐", style="info")
-    console.print("  │  🛡️  [bold cyan]RepGuard[/bold cyan] — Reputation Defense Engine  │", style="info")
-    console.print("  │     AI-Powered Fake Review Detection        │", style="info")
-    console.print("  │     v0.1.0                                  │", style="info")
+    console.print("  │   [bold cyan]RepGuard[/bold cyan] — Reputation Defense Engine        │", style="info")
+    console.print("  │   AI-Powered Fake Review Detection            │", style="info")
+    console.print("  │   v0.1.0                                      │", style="info")
     console.print("  └───────────────────────────────────────────────┘", style="info")
     console.print()
 

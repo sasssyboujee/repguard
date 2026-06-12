@@ -14,3 +14,5 @@ wheels/
 
 # Generated reports
 output/
+models/
+data/

@@ -52,6 +52,7 @@ def cmd_audit(args: argparse.Namespace) -> None:
             business_name=business_info.get("name", "Unknown"),
             business_category=args.category or "General Business",
             filter_low_ratings=not args.analyze_all,
+            use_prefilter=not args.no_prefilter,
         )
     )
 
@@ -188,6 +189,7 @@ def cmd_batch(args: argparse.Namespace) -> None:
                 analyze_reviews_batch(
                     reviews=reviews,
                     business_name=business_info.get("name", "Unknown"),
+                    use_prefilter=not args.no_prefilter,
                 )
             )
 
@@ -219,6 +221,24 @@ def cmd_batch(args: argparse.Namespace) -> None:
             continue
 
     console.print(f"\n[success]Batch audit complete. Reports saved to {output_dir}[/success]\n")
+
+
+def cmd_train_filter(args: argparse.Namespace) -> None:
+    """Train the local pre-filter model using the logged dataset."""
+    from repguard.prefilter import train_prefilter
+
+    print_banner()
+    console.print("[highlight]Mode: Train Local Pre-Filter[/highlight]\n")
+
+    console.print("  [info]Reading collected labels and training Random Forest model...[/info]")
+
+    try:
+        model_path = train_prefilter()
+        console.print(f"\n  [success]✓ Local pre-filter trained successfully![/success]")
+        console.print(f"  [info]Model saved to:[/info] {model_path}")
+        console.print("  [info]The pre-filter will now automatically use this Random Forest model.[/info]\n")
+    except Exception as e:
+        console.print(f"\n  [danger]✗ Training failed: {e}[/danger]\n")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -267,6 +287,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Analyze all reviews, not just low-rated ones",
     )
+    p_audit.add_argument(
+        "--no-prefilter",
+        action="store_true",
+        help="Disable local NLP pre-filter and analyze all matching reviews with Gemini",
+    )
     p_audit.set_defaults(func=cmd_audit)
 
     # ── analyze ────────────────────────────────────────────────────────────
@@ -314,7 +339,19 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Output directory for reports (default: ./output/)",
     )
+    p_batch.add_argument(
+        "--no-prefilter",
+        action="store_true",
+        help="Disable local NLP pre-filter and analyze all matching reviews with Gemini",
+    )
     p_batch.set_defaults(func=cmd_batch)
+
+    # ── train-filter ───────────────────────────────────────────────────────
+    p_train = subparsers.add_parser(
+        "train-filter",
+        help="Train the local Random Forest pre-filter using collected labeled data",
+    )
+    p_train.set_defaults(func=cmd_train_filter)
 
     return parser
 

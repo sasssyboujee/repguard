@@ -22,6 +22,7 @@ from repguard.utils import (
     GEMINI_MODEL,
     GEMINI_RPM_LIMIT,
     SUSPICION_THRESHOLD,
+    PREFILTER_THRESHOLD,
 )
 
 
@@ -180,6 +181,7 @@ async def analyze_reviews_batch(
     business_name: str = "Unknown Business",
     business_category: str = "Unknown",
     filter_low_ratings: bool = True,
+    use_prefilter: bool = True,
 ) -> list[AuditResult]:
     """Analyze a batch of reviews, respecting rate limits.
 
@@ -188,6 +190,7 @@ async def analyze_reviews_batch(
         business_name: Name of the business.
         business_category: Category of the business.
         filter_low_ratings: If True, only analyze 1-3 star reviews (skip clearly good ones).
+        use_prefilter: If True, use local pre-filter to bypass LLM for low suspicion reviews.
 
     Returns:
         List of AuditResult objects for reviews flagged as suspicious.
@@ -216,6 +219,17 @@ async def analyze_reviews_batch(
             f"({review.rating}★ by {review.reviewer_name})...[/muted]"
         )
 
+        # Apply local pre-filter if enabled
+        if use_prefilter:
+            from repguard.prefilter import predict_suspicion
+            local_suspicion = predict_suspicion(review.text, review.rating)
+            if local_suspicion < PREFILTER_THRESHOLD:
+                console.print(
+                    f"    [success]✓ Clean[/success] "
+                    f"(local pre-filter: suspicion {local_suspicion:.0%})"
+                )
+                continue
+
         start = time.monotonic()
 
         try:
@@ -224,6 +238,15 @@ async def analyze_reviews_batch(
                 business_name=business_name,
                 business_category=business_category,
                 client=client,
+            )
+
+            # Log the Gemini output to the local dataset for bootstrapping
+            from repguard.prefilter import log_labeled_review
+            log_labeled_review(
+                text=review.text,
+                rating=review.rating,
+                is_suspicious=analysis.is_suspicious,
+                confidence_score=analysis.confidence_score,
             )
 
             # Show result inline
