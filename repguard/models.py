@@ -85,6 +85,15 @@ class AuditResult(BaseModel):
     analysis: FraudAnalysis
 
 
+class AttackAnalysis(BaseModel):
+    """Analysis of patterns across a batch of reviews to detect coordinated attacks."""
+    is_under_attack: bool = Field(default=False, description="True if a coordinated attack is highly likely")
+    velocity_spike_detected: bool = Field(default=False, description="True if many bad reviews arrived simultaneously")
+    linguistic_overlap_detected: bool = Field(default=False, description="True if bad reviews share templated text")
+    rating_polarization_detected: bool = Field(default=False, description="True if mostly 1 and 5 star reviews exist")
+    attack_summary: str = Field(default="", description="Summary of why an attack is suspected")
+
+
 class AuditReport(BaseModel):
     """Complete audit report for a single business."""
 
@@ -110,6 +119,10 @@ class AuditReport(BaseModel):
     clean_reviews_count: int = Field(
         default=0,
         description="Number of reviews that passed the audit",
+    )
+    attack_analysis: AttackAnalysis | None = Field(
+        default=None,
+        description="Results of the batch attack detection module",
     )
     generated_at: datetime = Field(
         default_factory=datetime.now,

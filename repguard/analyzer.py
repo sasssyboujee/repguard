@@ -7,6 +7,7 @@ structured FraudAnalysis output via Pydantic schema enforcement.
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from typing import Optional
 
@@ -156,13 +157,22 @@ async def analyze_review(
                 analysis = FraudAnalysis.model_validate_json(response.text)
                 return analysis
 
-            except genai_errors.ServerError as e:
+            except Exception as e:
                 last_error = e
-                delay = RETRY_BASE_DELAY * (2 ** (attempt - 1))
+                # If it's a rate limit error, wait longer
+                if "429" in str(e) or "quota" in str(e).lower() or "exhausted" in str(e).lower():
+                    delay = 15  # Fallback to 15s for rate limits
+                    # Try to extract the requested retry delay
+                    match = re.search(r'retry in ([\d.]+)s', str(e), re.IGNORECASE)
+                    if match:
+                        delay = float(match.group(1)) + 1.0  # Add 1s buffer
+                else:
+                    delay = RETRY_BASE_DELAY * (2 ** (attempt - 1))
+                
                 console.print(
-                    f"    [warning]⚠ {model_name} unavailable "
+                    f"    [warning]⚠ {model_name} failed: {e.__class__.__name__} "
                     f"(attempt {attempt}/{MAX_RETRIES}), "
-                    f"retrying in {delay}s...[/warning]"
+                    f"retrying in {delay:.1f}s...[/warning]"
                 )
                 await asyncio.sleep(delay)
 
@@ -211,15 +221,14 @@ async def analyze_reviews_batch(
         return []
 
     results: list[AuditResult] = []
-    interval = 60.0 / GEMINI_RPM_LIMIT  # seconds between requests
 
+    # 1. First pass: Apply local pre-filter
+    suspicious_candidates = []
     for i, review in enumerate(candidates):
         console.print(
-            f"  [muted]Analyzing review {i + 1}/{len(candidates)} "
+            f"  [muted]Prefiltering review {i + 1}/{len(candidates)} "
             f"({review.rating}★ by {review.reviewer_name})...[/muted]"
         )
-
-        # Apply local pre-filter if enabled
         if use_prefilter:
             from repguard.prefilter import predict_suspicion
             local_suspicion = predict_suspicion(review.text, review.rating)
@@ -229,53 +238,77 @@ async def analyze_reviews_batch(
                     f"(local pre-filter: suspicion {local_suspicion:.0%})"
                 )
                 continue
+        suspicious_candidates.append((i, review))
 
-        start = time.monotonic()
+    if not suspicious_candidates:
+        console.print("\n  [highlight]Analysis complete:[/highlight] 0 suspicious out of 0 sent to AI")
+        return []
 
-        try:
-            analysis = await analyze_review(
-                review=review,
-                business_name=business_name,
-                business_category=business_category,
-                client=client,
-            )
-
-            # Log the Gemini output to the local dataset for bootstrapping
-            from repguard.prefilter import log_labeled_review
-            log_labeled_review(
-                text=review.text,
-                rating=review.rating,
-                is_suspicious=analysis.is_suspicious,
-                confidence_score=analysis.confidence_score,
-            )
-
-            # Show result inline
-            if analysis.is_suspicious and analysis.confidence_score >= SUSPICION_THRESHOLD:
-                console.print(
-                    f"    [danger]🚩 SUSPICIOUS[/danger] "
-                    f"(confidence: {analysis.confidence_score:.0%}) — "
-                    f"{analysis.fraud_indicators[0] if analysis.fraud_indicators else 'See reasoning'}"
+    # 2. Second pass: AI Analysis in parallel chunks
+    chunk_size = GEMINI_RPM_LIMIT
+    
+    for chunk_start in range(0, len(suspicious_candidates), chunk_size):
+        chunk = suspicious_candidates[chunk_start:chunk_start + chunk_size]
+        
+        async def process_review(orig_idx: int, rev: Review) -> Optional[AuditResult]:
+            try:
+                analysis = await analyze_review(
+                    review=rev,
+                    business_name=business_name,
+                    business_category=business_category,
+                    client=client,
                 )
-                results.append(AuditResult(review=review, analysis=analysis))
-            else:
-                console.print(
-                    f"    [success]✓ Clean[/success] "
-                    f"(confidence of fraud: {analysis.confidence_score:.0%})"
+                
+                # Log the Gemini output to the local dataset for bootstrapping
+                from repguard.prefilter import log_labeled_review
+                log_labeled_review(
+                    text=rev.text,
+                    rating=rev.rating,
+                    is_suspicious=analysis.is_suspicious,
+                    confidence_score=analysis.confidence_score,
                 )
 
-        except Exception as e:
-            console.print(f"    [warning]⚠ Analysis failed: {e}[/warning]")
-            continue
+                # Show result inline
+                if analysis.is_suspicious and analysis.confidence_score >= SUSPICION_THRESHOLD:
+                    console.print(
+                        f"    [danger]🚩 Review {orig_idx + 1}: SUSPICIOUS[/danger] "
+                        f"(confidence: {analysis.confidence_score:.0%}) — "
+                        f"{analysis.fraud_indicators[0] if analysis.fraud_indicators else 'See reasoning'}"
+                    )
+                    return AuditResult(review=rev, analysis=analysis)
+                else:
+                    console.print(
+                        f"    [success]✓ Review {orig_idx + 1}: Clean[/success] "
+                        f"(confidence of fraud: {analysis.confidence_score:.0%})"
+                    )
+                    return None
+                    
+            except Exception as e:
+                console.print(f"    [warning]⚠ Review {orig_idx + 1} Analysis failed: {e}[/warning]")
+                return None
 
-        # Rate limiting: wait if we processed too fast
-        elapsed = time.monotonic() - start
-        if elapsed < interval and i < len(candidates) - 1:
-            wait_time = interval - elapsed
-            await asyncio.sleep(wait_time)
+        # Run chunk concurrently, but stagger start times to avoid burst rate limits
+        async def staggered_process(idx: int, orig_idx: int, rev: Review) -> Optional[AuditResult]:
+            # Stagger each request by 2.5 seconds to avoid hitting concurrent burst limits
+            if idx > 0:
+                await asyncio.sleep(idx * 2.5)
+            return await process_review(orig_idx, rev)
+
+        chunk_tasks = [staggered_process(idx, orig_idx, rev) for idx, (orig_idx, rev) in enumerate(chunk)]
+        chunk_results = await asyncio.gather(*chunk_tasks)
+        
+        for res in chunk_results:
+            if res:
+                results.append(res)
+                
+        # Rate limit pause between chunks
+        if chunk_start + chunk_size < len(suspicious_candidates):
+            console.print("  [muted]Rate limit pause (60s)...[/muted]")
+            await asyncio.sleep(60.0)
 
     console.print(
         f"\n  [highlight]Analysis complete:[/highlight] "
-        f"{len(results)} suspicious out of {len(candidates)} analyzed"
+        f"{len(results)} suspicious out of {len(suspicious_candidates)} analyzed by AI"
     )
 
     return results

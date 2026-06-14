@@ -8,8 +8,16 @@ that can be trained once enough data is bootstrapped.
 from __future__ import annotations
 
 import csv
+import ssl
 from pathlib import Path
 import nltk
+
+try:
+    _create_unverified_https_context = ssl._create_unverified_context
+except AttributeError:
+    pass
+else:
+    ssl._create_default_https_context = _create_unverified_https_context
 
 from repguard.utils import PROJECT_ROOT, console
 

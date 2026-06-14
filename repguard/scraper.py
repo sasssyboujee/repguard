@@ -9,8 +9,10 @@ from __future__ import annotations
 import asyncio
 import random
 import re
+from pathlib import Path
 
 from playwright.async_api import Page, async_playwright, TimeoutError as PwTimeout
+from playwright_stealth import Stealth
 
 from repguard.models import Review
 from repguard.utils import console, DEFAULT_MAX_REVIEWS
@@ -46,65 +48,165 @@ async def _extract_business_info(page: Page) -> dict:
     info: dict = {}
 
     try:
-        name_el = page.locator(SEL_BUSINESS_NAME).first
-        info["name"] = await name_el.inner_text(timeout=5000)
-    except (PwTimeout, Exception):
+        for selector in [SEL_BUSINESS_NAME, 'h1.DUwDvf', 'h1']:
+            name_el = page.locator(selector).first
+            if await name_el.is_visible(timeout=2000):
+                info["name"] = await name_el.inner_text()
+                break
+        else:
+            info["name"] = "Unknown Business"
+    except Exception:
         info["name"] = "Unknown Business"
 
     try:
-        rating_el = page.locator(SEL_BUSINESS_RATING).first
-        rating_text = await rating_el.inner_text(timeout=3000)
-        info["rating"] = float(rating_text.strip())
-    except (PwTimeout, ValueError, Exception):
+        for selector in [SEL_BUSINESS_RATING, 'div.F7nice span[aria-hidden="true"]', 'span[aria-label*="stars"]', 'span[role="img"][aria-label*="stars"]']:
+            try:
+                rating_el = page.locator(selector).first
+                if await rating_el.is_visible(timeout=1000):
+                    rating_text = await rating_el.inner_text()
+                    if rating_text.strip():
+                        info["rating"] = float(rating_text.strip())
+                        break
+                    
+                    aria = await rating_el.get_attribute("aria-label")
+                    if aria:
+                        match = re.search(r'([\d.]+)\s*stars?', aria, re.IGNORECASE)
+                        if match:
+                            info["rating"] = float(match.group(1))
+                            break
+            except Exception:
+                continue
+        else:
+            info["rating"] = None
+    except Exception:
         info["rating"] = None
 
     try:
-        addr_el = page.locator(SEL_BUSINESS_ADDRESS).first
-        info["address"] = await addr_el.inner_text(timeout=3000)
-    except (PwTimeout, Exception):
+        for selector in [SEL_BUSINESS_ADDRESS, 'button[data-item-id="address"] div', 'button[data-item-id="address"]', 'div.Io6YTe']:
+            try:
+                addr_el = page.locator(selector).first
+                if await addr_el.is_visible(timeout=1000):
+                    info["address"] = await addr_el.inner_text()
+                    break
+            except Exception:
+                continue
+        else:
+            info["address"] = None
+    except Exception:
         info["address"] = None
 
     return info
 
 
 async def _click_reviews_tab(page: Page) -> None:
-    """Click the Reviews tab to open the reviews panel."""
+    """Click the Reviews tab or review count button to open the reviews panel."""
     console.print("  [muted]→ Clicking Reviews tab...[/muted]")
+    
+    # Let the UI settle
+    await _random_delay(500, 1000)
+
+    selectors_to_try = [
+        SEL_REVIEWS_TAB,
+        'button[role="tab"]:has-text("Reviews")',
+        'div[role="tab"]:has-text("Reviews")',
+        'button[data-item-id="review"]',
+        'button:has-text("Reviews")',
+        'div[role="tab"] button:has-text("Reviews")',
+        'button[aria-label*="reviews"]',
+        'div.F7nice',  # The whole rating block often acts as a link to reviews
+        'span:has-text("reviews")'
+    ]
+    
+    for selector in selectors_to_try:
+        try:
+            locators = page.locator(selector)
+            count = await locators.count()
+            for i in range(count):
+                el = locators.nth(i)
+                if await el.is_visible(timeout=500):
+                    # Force click in case it's intercepted by a transparent overlay
+                    await el.click(timeout=2000, force=True)
+                    await _random_delay(1500, 2500) # Give it time to animate panel in
+                    return
+        except Exception:
+            continue
+
+    # Try aria-label text search as absolute fallback
     try:
-        tab = page.locator(SEL_REVIEWS_TAB).first
-        await tab.click(timeout=10000)
-        await _random_delay(800, 1500)
-    except PwTimeout:
-        # Fallback: try clicking by text
-        await page.get_by_role("tab", name=re.compile(r"Reviews", re.IGNORECASE)).click(timeout=10000)
-        await _random_delay(800, 1500)
+        tab = page.get_by_role("tab", name=re.compile(r"Reviews", re.IGNORECASE))
+        if await tab.first.is_visible(timeout=2000):
+            await tab.first.click(force=True)
+            await _random_delay(1500, 2500)
+            return
+    except Exception:
+        pass
+
+    console.print("  [warning]⚠ Could not click Reviews tab. Proceeding in case reviews are already open.[/warning]")
 
 
-async def _sort_by_newest(page: Page) -> None:
-    """Sort reviews by 'Newest' using the sort dropdown."""
-    console.print("  [muted]→ Sorting by Newest...[/muted]")
+async def _sort_by_lowest_rating(page: Page) -> None:
+    """Sort reviews by 'Lowest rating' using the sort dropdown."""
+    console.print("  [muted]→ Sorting by Lowest rating...[/muted]")
     try:
-        sort_btn = page.locator(SEL_SORT_BUTTON).first
-        await sort_btn.click(timeout=8000)
-        await _random_delay(500, 1000)
+        sort_locators = [
+            SEL_SORT_BUTTON,
+            'button[aria-label="Sort reviews"]',
+            'button:has-text("Sort")'
+        ]
+        
+        sort_btn = None
+        for sel in sort_locators:
+            loc = page.locator(sel).first
+            if await loc.is_visible(timeout=1000):
+                sort_btn = loc
+                break
+                
+        if sort_btn:
+            await sort_btn.click(timeout=4000)
+            await _random_delay(800, 1200)
 
-        newest_opt = page.locator(SEL_SORT_NEWEST).first
-        await newest_opt.click(timeout=5000)
-        await _random_delay(1000, 2000)
-    except PwTimeout:
-        console.print("  [warning]⚠ Could not find sort button — proceeding with default order[/warning]")
+            lowest_locators = [
+                'div[role="menuitemradio"]:has-text("Lowest rating")',
+                'div:has-text("Lowest rating")',
+                'div[role="menuitemradio"]:has-text("Lowest")'
+            ]
+            for sel in lowest_locators:
+                newest_opt = page.locator(sel).first
+                if await newest_opt.is_visible(timeout=1000):
+                    await newest_opt.click(timeout=4000)
+                    await _random_delay(1500, 2500)
+                    return
+    except Exception:
+        pass
+    console.print("  [warning]⚠ Could not find sort button — proceeding with default order[/warning]")
 
 
 async def _scroll_reviews(page: Page, max_reviews: int) -> None:
     """Scroll the reviews panel to load more reviews."""
     console.print(f"  [muted]→ Scrolling to load up to {max_reviews} reviews...[/muted]")
 
-    scrollable = page.locator(SEL_SCROLLABLE_PANEL).first
+    # Find the scrollable panel using multiple selectors
+    scrollable = None
+    for selector in [SEL_SCROLLABLE_PANEL, 'div[role="feed"]', 'div.m6QErb[tabindex="0"]']:
+        locator = page.locator(selector).first
+        try:
+            if await locator.is_visible(timeout=1500):
+                scrollable = locator
+                break
+        except Exception:
+            continue
+
+    if scrollable is None:
+        scrollable = page.locator("body")
+
     previous_count = 0
     stale_rounds = 0
 
     for _ in range(max_reviews // 3 + 5):  # rough upper bound on scroll iterations
+        # Check review card counts (with fallback)
         current_count = await page.locator(SEL_REVIEW_CARD).count()
+        if current_count == 0:
+            current_count = await page.locator("div.jftiEf").count()
 
         if current_count >= max_reviews:
             break
@@ -145,7 +247,13 @@ async def _extract_reviews(page: Page, max_reviews: int) -> list[Review]:
     """Parse review cards from the DOM into Review models."""
     reviews: list[Review] = []
     cards = page.locator(SEL_REVIEW_CARD)
-    count = min(await cards.count(), max_reviews)
+    count = await cards.count()
+    if count == 0:
+        # Try fallback review class name
+        cards = page.locator("div.jftiEf")
+        count = await cards.count()
+
+    count = min(count, max_reviews)
 
     for i in range(count):
         card = cards.nth(i)
@@ -204,7 +312,11 @@ async def _extract_reviews(page: Page, max_reviews: int) -> list[Review]:
                 pass
 
             # Review ID
-            review_id = await card.get_attribute("data-review-id")
+            review_id = None
+            try:
+                review_id = await card.get_attribute("data-review-id", timeout=1000)
+            except (PwTimeout, Exception):
+                pass
 
             reviews.append(
                 Review(
@@ -222,7 +334,17 @@ async def _extract_reviews(page: Page, max_reviews: int) -> list[Review]:
             console.print(f"  [warning]⚠ Failed to parse review {i + 1}: {e}[/warning]")
             continue
 
-    return reviews
+    # Deduplicate reviews (Google Maps DOM often contains duplicate nodes for accessibility/layout)
+    unique_reviews = []
+    seen = set()
+    for r in reviews:
+        # Use review_id if available, otherwise composite key
+        key = r.review_id if r.review_id else f"{r.reviewer_name}::{r.text}"
+        if key not in seen:
+            seen.add(key)
+            unique_reviews.append(r)
+            
+    return unique_reviews
 
 
 async def scrape_reviews(
@@ -243,24 +365,48 @@ async def scrape_reviews(
     console.print(f"\n[info]🔍 Scraping reviews from:[/info] {url}")
     console.print(f"[info]   Target: up to {max_reviews} reviews[/info]\n")
 
-    async with async_playwright() as p:
+    session_file = Path("session.json")
+    is_first_run = not session_file.exists()
+    
+    # If it's the first run, we MUST show the browser so they can log in
+    launch_headless = headless if not is_first_run else False
+
+    async with Stealth().use_async(async_playwright()) as p:
         browser = await p.chromium.launch(
-            headless=headless,
+            headless=launch_headless,
+            channel="chrome",
             args=[
                 "--disable-blink-features=AutomationControlled",
                 "--no-sandbox",
             ],
         )
-        context = await browser.new_context(
-            viewport={"width": 1280, "height": 900},
-            user_agent=(
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/125.0.0.0 Safari/537.36"
-            ),
-            locale="en-US",
-        )
+        
+        context_kwargs = {
+            "viewport": {"width": 1280, "height": 900},
+            "locale": "en-US",
+        }
+        if not is_first_run:
+            context_kwargs["storage_state"] = str(session_file)
+            
+        context = await browser.new_context(**context_kwargs)
         page = await context.new_page()
+
+        if is_first_run:
+            console.print("\n[warning]No session.json found. We are launching a visible browser for you to log in.[/warning]")
+            console.print("[info]Please log into your Google Account. You have 60 seconds.[/info]")
+            
+            try:
+                await page.goto("https://accounts.google.com/", wait_until="domcontentloaded")
+            except Exception:
+                pass
+                
+            for i in range(60, 0, -10):
+                console.print(f"  [muted]... {i} seconds remaining to log in ...[/muted]")
+                await asyncio.sleep(10)
+                
+            # Save cookies and local storage
+            await context.storage_state(path=str(session_file))
+            console.print("[success]✓ Session saved to session.json![/success]\n")
 
         try:
             # Navigate to the business page
@@ -270,11 +416,26 @@ async def scrape_reviews(
 
             # Accept cookies/consent if prompted
             try:
-                consent = page.locator('button:has-text("Accept all")')
-                if await consent.count() > 0:
-                    await consent.first.click(timeout=3000)
-                    await _random_delay(500, 1000)
-            except (PwTimeout, Exception):
+                consent_selectors = [
+                    'button[aria-label*="Accept all"]',
+                    'button[aria-label*="Accept the use of cookies"]',
+                    'button:has-text("Accept all")',
+                    'button:has-text("I agree")',
+                    'button:has-text("Agree")',
+                    'button:has-text("Accept")',
+                    'form[action*="consent.google"] button',
+                ]
+                for selector in consent_selectors:
+                    try:
+                        btn = page.locator(selector).first
+                        if await btn.is_visible(timeout=1500):
+                            await btn.click()
+                            console.print(f"  [muted]→ Bypassed consent screen ('{selector}')[/muted]")
+                            await _random_delay(1000, 2000)
+                            break
+                    except Exception:
+                        continue
+            except Exception:
                 pass
 
             # Extract business info
@@ -286,8 +447,8 @@ async def scrape_reviews(
             # Click reviews tab
             await _click_reviews_tab(page)
 
-            # Sort by newest
-            await _sort_by_newest(page)
+            # Sort by lowest rating (since we're hunting for fake negative reviews)
+            await _sort_by_lowest_rating(page)
 
             # Scroll to load reviews
             await _scroll_reviews(page, max_reviews)

@@ -41,7 +41,7 @@ def get_api_key() -> str:
 GEMINI_MODEL = "gemini-2.5-flash"
 
 # Rate limiting for Gemini API (requests per minute for free tier)
-GEMINI_RPM_LIMIT = 15
+GEMINI_RPM_LIMIT = 4
 
 # Default max reviews to scrape per business
 DEFAULT_MAX_REVIEWS = 50

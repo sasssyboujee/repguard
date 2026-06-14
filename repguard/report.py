@@ -320,6 +320,39 @@ def generate_report(report: AuditReport, output_path: Path | None = None) -> Pat
         )
     )
 
+    if report.attack_analysis and report.attack_analysis.is_under_attack:
+        story.append(
+            Paragraph(
+                "🚨 COORDINATED ATTACK DETECTED 🚨",
+                ParagraphStyle(
+                    "attack_banner",
+                    parent=styles["Normal"],
+                    fontName="Helvetica-Bold",
+                    fontSize=14,
+                    textColor=WHITE,
+                    backColor=RED,
+                    alignment=TA_CENTER,
+                    spaceBefore=10,
+                    spaceAfter=5,
+                    borderPadding=8,
+                )
+            )
+        )
+        story.append(
+            Paragraph(
+                report.attack_analysis.attack_summary,
+                ParagraphStyle(
+                    "attack_desc",
+                    parent=styles["Normal"],
+                    fontName="Helvetica",
+                    fontSize=11,
+                    textColor=RED,
+                    spaceBefore=5,
+                    spaceAfter=15,
+                )
+            )
+        )
+
     summary_data = [
         ["Metric", "Value"],
         ["Total Reviews Analyzed", str(report.total_reviews_scraped)],

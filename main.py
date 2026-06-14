@@ -68,6 +68,10 @@ def cmd_audit(args: argparse.Namespace) -> None:
     else:
         risk_score = 0.0
 
+    # Detect coordinated attacks
+    from repguard.attack_detector import analyze_attack_patterns
+    attack_analysis = analyze_attack_patterns(reviews, flagged)
+
     report = AuditReport(
         business_name=business_info.get("name", "Unknown Business"),
         business_url=args.url,
@@ -76,14 +80,22 @@ def cmd_audit(args: argparse.Namespace) -> None:
         total_reviews_scraped=total,
         flagged_reviews=flagged,
         clean_reviews_count=clean_count,
+        attack_analysis=attack_analysis,
         generated_at=datetime.now(),
         overall_risk_score=risk_score,
     )
 
-    # Step 4: Generate PDF
-    console.rule("[bold cyan]Step 3 — Generating Report[/bold cyan]")
+    # Step 4: Generate Report and Assets
+    console.rule("[bold cyan]Step 3 — Generating Report & Assets[/bold cyan]")
     output_path = Path(args.output) if args.output else None
     pdf_path = generate_report(report, output_path)
+    
+    dispute_files = []
+    outreach_file = None
+    if flagged:
+        from repguard.generator import generate_dispute_letters, generate_outreach_email
+        dispute_files = generate_dispute_letters(report)
+        outreach_file = generate_outreach_email(report)
 
     # Summary
     console.print()
@@ -94,6 +106,10 @@ def cmd_audit(args: argparse.Namespace) -> None:
     console.print(f"  [info]Clean:[/info]        {clean_count}")
     console.print(f"  [info]Risk Score:[/info]   {risk_score:.0%}")
     console.print(f"  [info]Report:[/info]       {pdf_path}")
+    
+    if flagged:
+        console.print(f"  [info]Disputes:[/info]     {len(dispute_files)} letters generated")
+        console.print(f"  [info]Outreach:[/info]     {outreach_file}")
     console.print()
 
 
@@ -202,6 +218,9 @@ def cmd_batch(args: argparse.Namespace) -> None:
             else:
                 risk_score = 0.0
 
+            from repguard.attack_detector import analyze_attack_patterns
+            attack_analysis = analyze_attack_patterns(reviews, flagged)
+
             report = AuditReport(
                 business_name=business_info.get("name", "Unknown"),
                 business_url=url,
@@ -210,6 +229,7 @@ def cmd_batch(args: argparse.Namespace) -> None:
                 total_reviews_scraped=total,
                 flagged_reviews=flagged,
                 clean_reviews_count=total - flagged_count,
+                attack_analysis=attack_analysis,
                 generated_at=datetime.now(),
                 overall_risk_score=risk_score,
             )
@@ -225,20 +245,139 @@ def cmd_batch(args: argparse.Namespace) -> None:
 
 def cmd_train_filter(args: argparse.Namespace) -> None:
     """Train the local pre-filter model using the logged dataset."""
-    from repguard.prefilter import train_prefilter
+def cmd_prospect(args: argparse.Namespace) -> None:
+    """Search Google Maps for leads, scrape reviews, and generate outreach materials."""
+    from repguard.prospector import find_businesses
+    from repguard.scraper import scrape_reviews_sync
+    from repguard.analyzer import analyze_reviews_batch
+    from repguard.report import generate_report
+    from repguard.generator import generate_dispute_letters, generate_outreach_email
+    import time
 
     print_banner()
-    console.print("[highlight]Mode: Train Local Pre-Filter[/highlight]\n")
+    console.rule(f"[bold cyan]Prospecting: {args.query}[/bold cyan]")
+    
+    # 1. Find leads
+    console.print(f"\n[bold]Step 1: Finding Businesses...[/bold]")
+    urls = asyncio.run(find_businesses(args.query, limit=args.limit, headless=not args.visible))
+    
+    if not urls:
+        console.print("[warning]⚠ No businesses found for that query.[/warning]")
+        return
+        
+    console.print(f"  [success]✓ Found {len(urls)} target businesses[/success]\n")
+    
+    from repguard.db import has_been_audited, record_audit
 
-    console.print("  [info]Reading collected labels and training Random Forest model...[/info]")
+    # 2. Process each lead
+    for idx, url in enumerate(urls):
+        console.rule(f"[bold yellow]Lead {idx+1}/{len(urls)}[/bold yellow]")
+        
+        if has_been_audited(url):
+            console.print("  [muted]Skipping: Business has already been audited recently.[/muted]")
+            continue
+            
+        try:
+            # Scrape
+            business_info, reviews = scrape_reviews_sync(url, max_reviews=args.max_reviews, headless=not args.visible)
+            if not reviews:
+                console.print("  [muted]No reviews found, skipping...[/muted]")
+                record_audit(business_info.get("name", "Unknown"), url, business_info.get("rating"), 0.0, 0)
+                continue
+                
+            # Analyze
+            flagged = asyncio.run(
+                analyze_reviews_batch(
+                    reviews=reviews,
+                    business_name=business_info.get("name", "Unknown"),
+                    filter_low_ratings=True,
+                    use_prefilter=True,
+                )
+            )
+            
+            # Generate materials if fake reviews found
+            if flagged:
+                console.print(f"  [bold green]★ OPPORTUNITY FOUND: {len(flagged)} fake reviews![/bold green]")
+                
+                # Build Report
+                total = len(reviews)
+                avg_conf = sum(r.analysis.confidence_score for r in flagged) / len(flagged)
+                risk_score = min(1.0, (len(flagged) / max(total, 1)) * 2 * avg_conf)
+                
+                from repguard.attack_detector import analyze_attack_patterns
+                attack_analysis = analyze_attack_patterns(reviews, flagged)
 
+                report = AuditReport(
+                    business_name=business_info.get("name", "Unknown"),
+                    business_url=url,
+                    business_address=business_info.get("address"),
+                    business_rating=business_info.get("rating"),
+                    total_reviews_scraped=total,
+                    flagged_reviews=flagged,
+                    clean_reviews_count=total - len(flagged),
+                    attack_analysis=attack_analysis,
+                    generated_at=datetime.now(),
+                    overall_risk_score=risk_score,
+                )
+                
+                # Output
+                output_path = Path("leads") / report.business_name.replace(" ", "_")
+                output_path.mkdir(parents=True, exist_ok=True)
+                
+                pdf_path = generate_report(report, str(output_path))
+                generate_dispute_letters(report)
+                outreach_email = generate_outreach_email(report)
+                
+                console.print(f"  [success]✓ Outreach package saved to: {output_path}[/success]")
+                
+                # Auto-email dispatch
+                if hasattr(args, "notify_email") and args.notify_email:
+                    from repguard.mailer import send_outreach_email
+                    
+                    with open(outreach_email, "r", encoding="utf-8") as f:
+                        email_content = f.read()
+                        
+                    # Extract subject from the generated text file
+                    subject_line = "Urgent: Fake Reviews Found"
+                    lines = email_content.split("\n")
+                    if lines[0].startswith("Subject:"):
+                        subject_line = lines[0].replace("Subject:", "").strip()
+                        email_content = "\n".join(lines[1:]).strip()
+                        
+                    send_outreach_email(
+                        to_email=args.notify_email,
+                        subject=subject_line,
+                        body=email_content,
+                        attachments=[pdf_path]
+                    )
+                
+                record_audit(report.business_name, url, report.business_rating, risk_score, len(flagged))
+            else:
+                console.print("  [muted]No fake reviews found. Clean profile.[/muted]")
+                record_audit(business_info.get("name", "Unknown"), url, business_info.get("rating"), 0.0, 0)
+                
+        except Exception as e:
+            console.print(f"  [warning]⚠ Failed to process lead: {e}[/warning]")
+            
+        # Rate limit between businesses
+        if idx < len(urls) - 1:
+            console.print("  [muted]Pausing before next lead...[/muted]")
+            time.sleep(5)
+
+
+def cmd_train(args: argparse.Namespace) -> None:
+    """Train the offline Random Forest model using accumulated review data."""
+    from repguard.prefilter import train_prefilter
+    print_banner()
+    console.rule("[bold cyan]Training ML Prefilter[/bold cyan]")
+    
     try:
         model_path = train_prefilter()
-        console.print(f"\n  [success]✓ Local pre-filter trained successfully![/success]")
+        console.print(f"\n  [success]✓ Successfully trained Random Forest model![/success]")
         console.print(f"  [info]Model saved to:[/info] {model_path}")
-        console.print("  [info]The pre-filter will now automatically use this Random Forest model.[/info]\n")
+        console.print("  [muted]RepGuard will automatically use this model for future audits to save API tokens.[/muted]\n")
     except Exception as e:
-        console.print(f"\n  [danger]✗ Training failed: {e}[/danger]\n")
+        console.print(f"\n  [danger]✗ Training failed:[/danger] {e}\n")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -352,6 +491,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Train the local Random Forest pre-filter using collected labeled data",
     )
     p_train.set_defaults(func=cmd_train_filter)
+
+    # ── prospect ───────────────────────────────────────────────────────────
+    prospect_parser = subparsers.add_parser("prospect", help="Automatically find target businesses and audit them")
+    prospect_parser.add_argument("query", help="Search query (e.g., 'yoga studios in singapore')")
+    prospect_parser.add_argument("--limit", type=int, default=3, help="Max businesses to process (default: 3)")
+    prospect_parser.add_argument("--max-reviews", type=int, default=20, help="Max reviews to scrape per business (default: 20)")
+    prospect_parser.add_argument("--visible", action="store_true", help="Run browser in visible mode")
+    prospect_parser.add_argument("--notify-email", type=str, help="Email address to send the generated leads to (e.g., your own inbox)")
+    prospect_parser.set_defaults(func=cmd_prospect)
 
     return parser
 
