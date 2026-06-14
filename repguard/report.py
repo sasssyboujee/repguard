@@ -228,12 +228,13 @@ def _risk_label(score: float) -> tuple[str, str]:
 
 # ── Report Builder ─────────────────────────────────────────────────────────────
 
-def generate_report(report: AuditReport, output_path: Path | None = None) -> Path:
+def generate_report(report: AuditReport, output_path: Path | None = None, is_teaser: bool = False) -> Path:
     """Generate a professional PDF audit report.
 
     Args:
         report: The complete AuditReport data.
         output_path: Custom output path. Defaults to output/<business_name>_audit.pdf.
+        is_teaser: If True, limit the report to 3 reviews and add a call to action.
 
     Returns:
         Path to the generated PDF file.
@@ -417,7 +418,11 @@ def generate_report(report: AuditReport, output_path: Path | None = None) -> Pat
             )
         )
 
-        for idx, result in enumerate(report.flagged_reviews, 1):
+        display_reviews = report.flagged_reviews
+        if is_teaser:
+            display_reviews = report.flagged_reviews[:3]
+
+        for idx, result in enumerate(display_reviews, 1):
             review = result.review
             analysis = result.analysis
 
@@ -471,7 +476,48 @@ def generate_report(report: AuditReport, output_path: Path | None = None) -> Pat
                 )
             )
 
+        if is_teaser and len(report.flagged_reviews) > 3:
+            hidden_count = len(report.flagged_reviews) - 3
+            story.append(Spacer(1, 15))
+            story.append(
+                Paragraph(
+                    f"🔒 {hidden_count} Additional Fake Reviews Hidden 🔒",
+                    ParagraphStyle(
+                        "cta_banner",
+                        parent=styles["Normal"],
+                        fontName="Helvetica-Bold",
+                        fontSize=14,
+                        textColor=WHITE,
+                        backColor=DARK_BLUE,
+                        alignment=TA_CENTER,
+                        spaceBefore=10,
+                        spaceAfter=5,
+                        borderPadding=10,
+                    )
+                )
+            )
+            story.append(
+                Paragraph(
+                    "This is a limited preview report. We have identified multiple other highly suspicious reviews dragging down your online reputation. Contact us to receive the full, unlocked audit report and to begin the removal process.",
+                    ParagraphStyle(
+                        "cta_desc",
+                        parent=styles["Normal"],
+                        fontName="Helvetica",
+                        fontSize=11,
+                        textColor=DARK_TEXT,
+                        alignment=TA_CENTER,
+                        spaceBefore=5,
+                        spaceAfter=15,
+                    )
+                )
+            )
+            
         story.append(PageBreak())
+
+    if is_teaser:
+        # Build the final doc and exit early to skip dispute templates
+        doc.build(story, onFirstPage=_add_page_header_footer, onLaterPages=_add_page_header_footer)
+        return output_path
 
     # ── Dispute Templates ──────────────────────────────────────────────────
 

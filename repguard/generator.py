@@ -87,11 +87,11 @@ We identified {suspicious_count} highly suspicious 1-star reviews out of the {to
 
 This is not just a few angry customers—this is a targeted attack. Fake review bombs severely impact local SEO ranking and can permanently drive away potential customers.
 
-We have already done the hard work of analyzing these reviews against Google's User Contributed Content Policy. I have attached a full PDF audit report detailing the evidence of the attack, along with pre-written dispute letters you can submit directly to Google to have them removed.
+I have attached a free preview report detailing exactly 3 of the fake reviews we found, along with the AI's fraud reasoning. 
 
-Because this is an active attack, time is of the essence. If you'd like our team to handle the entire removal process and escalation for you, I'd love to jump on a quick 5-minute call today.
+Because this is an active attack, time is of the essence. If you'd like to unlock the full audit report and have our team handle the entire removal and dispute escalation process for you, I'd love to jump on a quick 5-minute call today.
 
-Let me know if you have any questions about the attached report!"""
+Let me know if you have any questions about the attached preview report!"""
     else:
         subject = f"Urgent: {suspicious_count} Fake Reviews Found on your Google Maps Profile"
         body = f"""Hi {report.business_name} Team,
@@ -100,11 +100,11 @@ I run a reputation management service, and we recently ran a security sweep of l
 
 Fake reviews severely impact local SEO ranking and drive away potential customers. 
 
-We have already done the hard work of analyzing these reviews against Google's User Contributed Content Policy. I have attached a full PDF audit report detailing exactly why these reviews are fake, along with pre-written dispute letters you can submit directly to Google to have them removed.
+I have attached a free preview report detailing exactly 3 of the fake reviews we found, along with our AI's fraud reasoning. 
 
-If you'd like our team to handle the entire removal process for you, or if you want us to continuously monitor your profile to protect it against future review attacks, I'd love to jump on a quick 5-minute call.
+If you'd like to unlock the full audit report and have our team handle the entire removal and dispute escalation process for you, I'd love to jump on a quick 5-minute call today.
 
-Let me know if you have any questions about the attached report!"""
+Let me know if you have any questions about the attached preview report!"""
 
     content = f"""Subject: {subject}
 

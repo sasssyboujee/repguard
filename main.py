@@ -324,11 +324,10 @@ def cmd_prospect(args: argparse.Namespace) -> None:
                 output_path = Path("leads") / report.business_name.replace(" ", "_")
                 output_path.mkdir(parents=True, exist_ok=True)
                 
-                pdf_path = generate_report(report, str(output_path))
-                generate_dispute_letters(report)
+                pdf_path = generate_report(report, str(output_path), is_teaser=True)
                 outreach_email = generate_outreach_email(report)
                 
-                console.print(f"  [success]✓ Outreach package saved to: {output_path}[/success]")
+                console.print(f"  [success]✓ Teaser Outreach package saved to: {output_path}[/success]")
                 
                 # Auto-email dispatch
                 if hasattr(args, "notify_email") and args.notify_email:
