@@ -17,6 +17,10 @@ from playwright_stealth import Stealth
 from repguard.models import Review
 from repguard.utils import console, DEFAULT_MAX_REVIEWS
 
+class ScraperOutOfSyncError(Exception):
+    """Raised when the scraper extracts empty fields, indicating DOM selectors are outdated."""
+    pass
+
 
 # ── Selectors ──────────────────────────────────────────────────────────────────
 # Google Maps DOM selectors (as of mid-2025). These may change over time.
@@ -197,7 +201,7 @@ async def _scroll_reviews(page: Page, max_reviews: int) -> None:
             continue
 
     if scrollable is None:
-        scrollable = page.locator("body")
+        raise ScraperOutOfSyncError("Could not find the scrollable review container. Google Maps UI may have changed.")
 
     previous_count = 0
     stale_rounds = 0
@@ -344,6 +348,11 @@ async def _extract_reviews(page: Page, max_reviews: int) -> list[Review]:
             seen.add(key)
             unique_reviews.append(r)
             
+    if unique_reviews:
+        empty_count = sum(1 for r in unique_reviews if r.reviewer_name == "Anonymous" and r.date == "Unknown")
+        if empty_count / len(unique_reviews) > 0.5:
+            raise ScraperOutOfSyncError("More than 50% of extracted reviews are empty. DOM selectors are likely out of sync.")
+            
     return unique_reviews
 
 
@@ -476,6 +485,64 @@ async def scrape_reviews(
             raise
         finally:
             await browser.close()
+
+
+async def scrape_reviews_concurrent(
+    browser,
+    url: str,
+    max_reviews: int = DEFAULT_MAX_REVIEWS,
+) -> tuple[dict, list[Review]]:
+    """Scrape reviews concurrently using a shared browser instance."""
+    console.print(f"\n[info]🔍 Scraping reviews concurrently from:[/info] {url}")
+    
+    session_file = Path("session.json")
+    context_kwargs = {
+        "viewport": {"width": 1280, "height": 900},
+        "locale": "en-US",
+    }
+    if session_file.exists():
+        context_kwargs["storage_state"] = str(session_file)
+        
+    context = await browser.new_context(**context_kwargs)
+    page = await context.new_page()
+
+    try:
+        await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        await _random_delay(2000, 3000)
+
+        # Accept cookies/consent if prompted
+        try:
+            consent_selectors = [
+                'button[aria-label*="Accept all"]',
+                'button[aria-label*="Accept the use of cookies"]',
+                'button:has-text("Accept all")',
+                'button:has-text("I agree")',
+                'button:has-text("Agree")',
+                'button:has-text("Accept")',
+                'form[action*="consent.google"] button',
+            ]
+            for selector in consent_selectors:
+                try:
+                    btn = page.locator(selector).first
+                    if await btn.is_visible(timeout=1500):
+                        await btn.click()
+                        await _random_delay(1000, 2000)
+                        break
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+        business_info = await _extract_business_info(page)
+        await _click_reviews_tab(page)
+        await _sort_by_lowest_rating(page)
+        await _scroll_reviews(page, max_reviews)
+        await _expand_review_text(page)
+        reviews = await _extract_reviews(page, max_reviews)
+
+        return business_info, reviews
+    finally:
+        await context.close()
 
 
 def scrape_reviews_sync(

@@ -11,6 +11,8 @@ import re
 import time
 from typing import Optional
 
+from aiolimiter import AsyncLimiter
+from pydantic import ValidationError
 from google.genai import errors as genai_errors
 
 from google import genai
@@ -102,6 +104,9 @@ MODEL_CHAIN = [GEMINI_MODEL, "gemini-2.0-flash"]
 MAX_RETRIES = 3
 RETRY_BASE_DELAY = 2  # seconds
 
+# Rate limit: 200 requests per 60 seconds (safe for pay-as-you-go)
+RATE_LIMITER = AsyncLimiter(200, 60)
+
 
 def _build_client() -> genai.Client:
     """Build and return a configured Gemini client."""
@@ -157,6 +162,9 @@ async def analyze_review(
                 analysis = FraudAnalysis.model_validate_json(response.text)
                 return analysis
 
+            except ValidationError as e:
+                console.print(f"    [danger]✗ {model_name} failed Pydantic validation. Failing fast without retries.[/danger]")
+                raise e
             except Exception as e:
                 last_error = e
                 # If it's a rate limit error, wait longer
@@ -287,24 +295,17 @@ async def analyze_reviews_batch(
                 console.print(f"    [warning]⚠ Review {orig_idx + 1} Analysis failed: {e}[/warning]")
                 return None
 
-        # Run chunk concurrently, but stagger start times to avoid burst rate limits
-        async def staggered_process(idx: int, orig_idx: int, rev: Review) -> Optional[AuditResult]:
-            # Stagger each request by 2.5 seconds to avoid hitting concurrent burst limits
-            if idx > 0:
-                await asyncio.sleep(idx * 2.5)
-            return await process_review(orig_idx, rev)
+        # Run chunk concurrently, controlled by AsyncLimiter
+        async def ratelimited_process(orig_idx: int, rev: Review) -> Optional[AuditResult]:
+            async with RATE_LIMITER:
+                return await process_review(orig_idx, rev)
 
-        chunk_tasks = [staggered_process(idx, orig_idx, rev) for idx, (orig_idx, rev) in enumerate(chunk)]
+        chunk_tasks = [ratelimited_process(orig_idx, rev) for orig_idx, rev in chunk]
         chunk_results = await asyncio.gather(*chunk_tasks)
         
         for res in chunk_results:
             if res:
                 results.append(res)
-                
-        # Rate limit pause between chunks
-        if chunk_start + chunk_size < len(suspicious_candidates):
-            console.print("  [muted]Rate limit pause (60s)...[/muted]")
-            await asyncio.sleep(60.0)
 
     console.print(
         f"\n  [highlight]Analysis complete:[/highlight] "

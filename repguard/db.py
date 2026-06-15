@@ -13,7 +13,8 @@ DB_PATH = PROJECT_ROOT / "repguard.db"
 
 def init_db() -> None:
     """Initialize the SQLite database and create tables if they don't exist."""
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30.0)
+    conn.execute("PRAGMA journal_mode=WAL;")
     cursor = conn.cursor()
     
     cursor.execute("""
@@ -45,7 +46,8 @@ def has_been_audited(url: str, days_threshold: int = 30) -> bool:
         init_db()
         return False
         
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30.0)
+    conn.execute("PRAGMA journal_mode=WAL;")
     cursor = conn.cursor()
     
     cursor.execute(
@@ -72,7 +74,8 @@ def record_audit(
 ) -> None:
     """Save the results of an audit to the database."""
     init_db()
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30.0)
+    conn.execute("PRAGMA journal_mode=WAL;")
     cursor = conn.cursor()
     
     # We use REPLACE so if the URL already exists, it updates the record

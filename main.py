@@ -379,6 +379,14 @@ def cmd_train(args: argparse.Namespace) -> None:
         console.print(f"\n  [danger]✗ Training failed:[/danger] {e}\n")
 
 
+def cmd_orchestrate(args: argparse.Namespace) -> None:
+    """Run the multi-agent pipeline to find leads and audit reviews."""
+    from repguard.agents import run_multi_agent_pipeline
+    from repguard.utils import print_banner
+    print_banner()
+    asyncio.run(run_multi_agent_pipeline(args.query, args.email, args.limit))
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the argument parser with all subcommands."""
     parser = argparse.ArgumentParser(
@@ -499,6 +507,13 @@ def build_parser() -> argparse.ArgumentParser:
     prospect_parser.add_argument("--visible", action="store_true", help="Run browser in visible mode")
     prospect_parser.add_argument("--notify-email", type=str, help="Email address to send the generated leads to (e.g., your own inbox)")
     prospect_parser.set_defaults(func=cmd_prospect)
+
+    # ── orchestrate ───────────────────────────────────────────────────────────
+    p_orch = subparsers.add_parser("orchestrate", help="Run the Multi-Agent RepGuard Pipeline")
+    p_orch.add_argument("query", help="Search query (e.g., 'dentists in singapore')")
+    p_orch.add_argument("--limit", type=int, default=3, help="Max businesses to process (default: 3)")
+    p_orch.add_argument("--email", type=str, default="test@example.com", help="Email to send the teaser to")
+    p_orch.set_defaults(func=cmd_orchestrate)
 
     return parser
 
